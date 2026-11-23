@@ -6,40 +6,36 @@ const crypto = require("crypto");
 const app = express();
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: "30kb" }));
 
 const PORT = process.env.PORT || 3000;
-
-// Almacenamiento temporal
 const rooms = new Map();
 
-// Estado del servidor
 app.get("/", (req, res) => {
   res.json({
     app: "Phone Tracker",
     status: "online",
-    version: "1.0"
+    version: "1.1"
   });
 });
 
-// Crear código de conexión
 app.post("/api/create", (req, res) => {
   const code = crypto.randomBytes(3).toString("hex").toUpperCase();
 
   rooms.set(code, {
     devices: [],
+    deviceInfo: {},
     locations: {}
   });
 
   res.json({ success: true, code });
 });
 
-// Unirse con autorización
 app.post("/api/join", (req, res) => {
-  const { code, deviceId } = req.body;
+  const { code, deviceId, deviceInfo } = req.body;
   const room = rooms.get(String(code || "").toUpperCase());
 
-  if (!room || !deviceId) {
+  if (!room || typeof deviceId !== "string" || !deviceId) {
     return res.status(400).json({
       success: false,
       message: "Código o dispositivo inválido"
@@ -57,12 +53,38 @@ app.post("/api/join", (req, res) => {
     room.devices.push(deviceId);
   }
 
+  if (deviceInfo && typeof deviceInfo === "object") {
+    const clean = {};
+    const allowed = [
+      "deviceName",
+      "model",
+      "system",
+      "browser",
+      "screen",
+      "language"
+    ];
+
+    for (const key of allowed) {
+      if (typeof deviceInfo[key] === "string") {
+        clean[key] = deviceInfo[key].slice(0, 100);
+      }
+    }
+
+    room.deviceInfo[deviceId] = clean;
+  }
+
   res.json({ success: true });
 });
 
-// Compartir ubicación voluntariamente
 app.post("/api/location", (req, res) => {
-  const { code, deviceId, latitude, longitude, accuracy } = req.body;
+  const {
+    code,
+    deviceId,
+    latitude,
+    longitude,
+    accuracy
+  } = req.body;
+
   const room = rooms.get(String(code || "").toUpperCase());
 
   if (!room || !room.devices.includes(deviceId)) {
@@ -74,8 +96,10 @@ app.post("/api/location", (req, res) => {
     typeof longitude !== "number" ||
     !Number.isFinite(latitude) ||
     !Number.isFinite(longitude) ||
-    latitude < -90 || latitude > 90 ||
-    longitude < -180 || longitude > 180
+    latitude < -90 ||
+    latitude > 90 ||
+    longitude < -180 ||
+    longitude > 180
   ) {
     return res.status(400).json({ success: false });
   }
@@ -83,14 +107,13 @@ app.post("/api/location", (req, res) => {
   room.locations[deviceId] = {
     latitude,
     longitude,
-    accuracy,
+    accuracy: Number.isFinite(accuracy) ? accuracy : null,
     updatedAt: Date.now()
   };
 
   res.json({ success: true });
 });
 
-// Consultar ubicaciones del grupo
 app.get("/api/location/:code", (req, res) => {
   const room = rooms.get(req.params.code.toUpperCase());
 
@@ -100,11 +123,11 @@ app.get("/api/location/:code", (req, res) => {
 
   res.json({
     success: true,
-    locations: room.locations
+    locations: room.locations,
+    devices: room.deviceInfo
   });
 });
 
-// Detener y borrar ubicación del dispositivo
 app.post("/api/stop", (req, res) => {
   const { code, deviceId } = req.body;
   const room = rooms.get(String(code || "").toUpperCase());
@@ -125,4 +148,4 @@ app.get("/health", (req, res) => {
 app.listen(PORT, () => {
   console.log(`Phone Tracker activo en puerto ${PORT}`);
 });
-    
+  
