@@ -18,7 +18,7 @@ app.get("/", (req, res) => {
   res.json({
     app: "Phone Tracker",
     status: "online",
-    version: "4.0"
+    version: "4.1"
   });
 });
 
@@ -31,13 +31,17 @@ function validId(id) {
     /^PT-[a-zA-Z0-9-]{10,150}$/.test(id);
 }
 
+function cleanName(name) {
+  if (typeof name !== "string") return "Dispositivo";
+  return name.trim().slice(0, 35) || "Dispositivo";
+}
+
 function getRoom(code) {
   return rooms.get(String(code || "").toUpperCase());
 }
 
-// Registrar el propio teléfono
 app.post("/api/register", (req, res) => {
-  const { deviceId, deviceInfo } = req.body;
+  const { deviceId, deviceInfo, name } = req.body;
 
   if (!validId(deviceId)) {
     return res.status(400).json({
@@ -50,12 +54,12 @@ app.post("/api/register", (req, res) => {
   let room = code ? getRoom(code) : null;
 
   if (!room) {
-    code = crypto.randomBytes(3)
-      .toString("hex").toUpperCase();
+    code = crypto.randomBytes(3).toString("hex").toUpperCase();
 
     room = {
       devices: [deviceId],
       deviceInfo: {},
+      deviceNames: {},
       locations: {}
     };
 
@@ -64,16 +68,13 @@ app.post("/api/register", (req, res) => {
   }
 
   room.deviceInfo[deviceId] = deviceInfo || {};
+  room.deviceNames[deviceId] = cleanName(name);
 
-  res.json({
-    success: true,
-    code
-  });
+  res.json({ success: true, code });
 });
 
-// Solicitar conexión al otro teléfono
 app.post("/api/connect", (req, res) => {
-  const { deviceId, targetId } = req.body;
+  const { deviceId, targetId, name } = req.body;
 
   if (!validId(deviceId) ||
       !validId(targetId) ||
@@ -85,9 +86,7 @@ app.post("/api/connect", (req, res) => {
   }
 
   const targetCode = deviceRooms.get(targetId);
-  const targetRoom = targetCode
-    ? getRoom(targetCode)
-    : null;
+  const targetRoom = targetCode ? getRoom(targetCode) : null;
 
   if (!targetRoom) {
     return res.status(404).json({
@@ -109,18 +108,18 @@ app.post("/api/connect", (req, res) => {
   pendingRequests.set(requestId, {
     deviceId,
     targetId,
-    code: targetCode
+    code: targetCode,
+    senderName: cleanName(name)
   });
 
   res.json({
     success: true,
     pending: true,
     requestId,
-    message: "Solicitud enviada. Esperando aceptación."
+    message: "Solicitud enviada."
   });
 });
 
-// Consultar solicitudes recibidas
 app.get("/api/requests/:deviceId", (req, res) => {
   const deviceId = req.params.deviceId;
 
@@ -134,20 +133,17 @@ app.get("/api/requests/:deviceId", (req, res) => {
     if (request.targetId === deviceId) {
       requests.push({
         requestId,
-        deviceId: request.deviceId
+        deviceId: request.deviceId,
+        name: request.senderName
       });
     }
   }
 
-  res.json({
-    success: true,
-    requests
-  });
+  res.json({ success: true, requests });
 });
 
-// Aceptar una solicitud en el teléfono receptor
 app.post("/api/accept", (req, res) => {
-  const { requestId, deviceId, deviceInfo } = req.body;
+  const { requestId, deviceId, deviceInfo, name } = req.body;
   const request = pendingRequests.get(requestId);
 
   if (!request || request.targetId !== deviceId) {
@@ -171,11 +167,10 @@ app.post("/api/accept", (req, res) => {
   }
 
   room.deviceInfo[deviceId] = deviceInfo || {};
-  room.deviceInfo[request.deviceId] =
-    room.deviceInfo[request.deviceId] || {};
+  room.deviceNames[deviceId] = cleanName(name);
+  room.deviceNames[request.deviceId] = request.senderName;
 
   deviceRooms.set(request.deviceId, request.code);
-
   pendingRequests.delete(requestId);
 
   res.json({
@@ -184,9 +179,8 @@ app.post("/api/accept", (req, res) => {
   });
 });
 
-// Reunirse a un grupo guardado
 app.post("/api/join", (req, res) => {
-  const { code, deviceId, deviceInfo } = req.body;
+  const { code, deviceId, deviceInfo, name } = req.body;
   const room = getRoom(code);
 
   if (!room || !validId(deviceId) ||
@@ -198,12 +192,13 @@ app.post("/api/join", (req, res) => {
   }
 
   room.deviceInfo[deviceId] = deviceInfo || {};
+  room.deviceNames[deviceId] = cleanName(name);
+
   deviceRooms.set(deviceId, String(code).toUpperCase());
 
   res.json({ success: true });
 });
 
-// Compartir ubicación voluntariamente
 app.post("/api/location", (req, res) => {
   const {
     code,
@@ -246,7 +241,6 @@ app.post("/api/location", (req, res) => {
   res.json({ success: true });
 });
 
-// Consultar ubicaciones y dispositivos
 app.get("/api/location/:code", (req, res) => {
   const room = getRoom(req.params.code);
 
@@ -261,19 +255,17 @@ app.get("/api/location/:code", (req, res) => {
     success: true,
     locations: room.locations,
     devices: room.devices,
-    deviceInfo: room.deviceInfo
+    deviceInfo: room.deviceInfo,
+    deviceNames: room.deviceNames
   });
 });
 
-// Detener ubicación
 app.post("/api/stop", (req, res) => {
   const { code, deviceId } = req.body;
   const room = getRoom(code);
 
   if (!room || !room.devices.includes(deviceId)) {
-    return res.status(403).json({
-      success: false
-    });
+    return res.status(403).json({ success: false });
   }
 
   delete room.locations[deviceId];
@@ -282,6 +274,6 @@ app.post("/api/stop", (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log("Phone Tracker activo en puerto " + PORT);
+  console.log("Phone Tracker 4.1 activo en puerto " + PORT);
 });
-   
+  
