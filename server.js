@@ -18,7 +18,7 @@ app.get("/", (req, res) => {
   res.json({
     app: "Phone Tracker",
     status: "online",
-    version: "4.1"
+    version: "4.2"
   });
 });
 
@@ -53,7 +53,7 @@ app.post("/api/register", (req, res) => {
   let code = deviceRooms.get(deviceId);
   let room = code ? getRoom(code) : null;
 
-  if (!room) {
+  if (!room || !room.devices.includes(deviceId)) {
     code = crypto.randomBytes(3).toString("hex").toUpperCase();
 
     room = {
@@ -76,9 +76,11 @@ app.post("/api/register", (req, res) => {
 app.post("/api/connect", (req, res) => {
   const { deviceId, targetId, name } = req.body;
 
-  if (!validId(deviceId) ||
-      !validId(targetId) ||
-      deviceId === targetId) {
+  if (
+    !validId(deviceId) ||
+    !validId(targetId) ||
+    deviceId === targetId
+  ) {
     return res.status(400).json({
       success: false,
       message: "ID inválido."
@@ -88,15 +90,17 @@ app.post("/api/connect", (req, res) => {
   const targetCode = deviceRooms.get(targetId);
   const targetRoom = targetCode ? getRoom(targetCode) : null;
 
-  if (!targetRoom) {
+  if (!targetRoom || !targetRoom.devices.includes(targetId)) {
     return res.status(404).json({
       success: false,
       message: "El teléfono todavía no está registrado."
     });
   }
 
-  if (targetRoom.devices.length >= 2 &&
-      !targetRoom.devices.includes(deviceId)) {
+  if (
+    targetRoom.devices.length >= 2 &&
+    !targetRoom.devices.includes(deviceId)
+  ) {
     return res.status(403).json({
       success: false,
       message: "El grupo ya tiene dos teléfonos."
@@ -109,7 +113,8 @@ app.post("/api/connect", (req, res) => {
     deviceId,
     targetId,
     code: targetCode,
-    senderName: cleanName(name)
+    senderName: cleanName(name),
+    createdAt: Date.now()
   });
 
   res.json({
@@ -144,21 +149,36 @@ app.get("/api/requests/:deviceId", (req, res) => {
 
 app.post("/api/accept", (req, res) => {
   const { requestId, deviceId, deviceInfo, name } = req.body;
+
   const request = pendingRequests.get(requestId);
 
   if (!request || request.targetId !== deviceId) {
     return res.status(403).json({
       success: false,
-      message: "Solicitud inválida."
+      message: "La solicitud ya no existe o no es válida."
     });
   }
 
   const room = getRoom(request.code);
 
-  if (!room || room.devices.length >= 2) {
+  if (!room || !room.devices.includes(request.targetId)) {
+    pendingRequests.delete(requestId);
+
+    return res.status(404).json({
+      success: false,
+      message: "La sala ya no existe. Envía una nueva solicitud."
+    });
+  }
+
+  // CORRECCIÓN: solo rechazar si el grupo está lleno
+  // y el dispositivo solicitante todavía no pertenece a él.
+  if (
+    room.devices.length >= 2 &&
+    !room.devices.includes(request.deviceId)
+  ) {
     return res.status(403).json({
       success: false,
-      message: "No se puede completar la conexión."
+      message: "El grupo ya tiene dos teléfonos."
     });
   }
 
@@ -170,12 +190,16 @@ app.post("/api/accept", (req, res) => {
   room.deviceNames[deviceId] = cleanName(name);
   room.deviceNames[request.deviceId] = request.senderName;
 
+  // Ambos teléfonos quedan asociados a la misma sala.
+  deviceRooms.set(deviceId, request.code);
   deviceRooms.set(request.deviceId, request.code);
+
   pendingRequests.delete(requestId);
 
   res.json({
     success: true,
-    code: request.code
+    code: request.code,
+    message: "Conexión completada."
   });
 });
 
@@ -183,8 +207,11 @@ app.post("/api/join", (req, res) => {
   const { code, deviceId, deviceInfo, name } = req.body;
   const room = getRoom(code);
 
-  if (!room || !validId(deviceId) ||
-      !room.devices.includes(deviceId)) {
+  if (
+    !room ||
+    !validId(deviceId) ||
+    !room.devices.includes(deviceId)
+  ) {
     return res.status(403).json({
       success: false,
       message: "No perteneces a este grupo."
@@ -274,6 +301,6 @@ app.post("/api/stop", (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log("Phone Tracker 4.1 activo en puerto " + PORT);
+  console.log("Phone Tracker 4.2 activo en puerto " + PORT);
 });
-  
+                      
